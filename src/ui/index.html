@@ -18,6 +18,7 @@
         <span style="font-size:13px;font-weight:600;color:var(--text-secondary);letter-spacing:.4px;">Humita Launcher</span>
       </div>
       <div style="-webkit-app-region:no-drag;display:flex;">
+        <button class="wbtn minimize" onclick="window.api.window.minimize()">─</button>
         <button class="wbtn close" onclick="window.api.window.close()">✕</button>
       </div>
     </div>
@@ -73,32 +74,39 @@
 
       <!-- Sidebar -->
       <aside class="sidebar">
-        <div class="sidebar-logo">
-          <div class="logo-text">HUMITA</div>
-          <div class="logo-sub">LAUNCHER</div>
-        </div>
 
         <nav class="sidebar-nav">
-          <button class="nav-btn active" data-page="home">
+          <button class="nav-btn active" data-page="home" title="Inicio">
             <span class="nav-icon"></span>
-            <span>Inicio</span>
           </button>
-          <button class="nav-btn" data-page="settings">
+          <button class="nav-btn" data-page="versions" title="Modpacks">
             <span class="nav-icon"></span>
-            <span>Ajustes</span>
+          </button>
+          <button class="nav-btn" data-page="settings" title="Ajustes">
+            <span class="nav-icon"></span>
           </button>
         </nav>
 
         <div class="sidebar-footer">
-          <div class="user-chip" id="userChip">
+          <!-- Skin clickeable -->
+          <div class="user-skin-btn" id="userChip" title="Cuenta">
             <img id="userSkin" src="https://cravatar.eu/avatar/steve" alt="Skin" class="user-avatar">
-            <div style="min-width:0;">
-              <div class="user-name" id="userName">Sin sesión</div>
-              <div class="user-type" id="userType"></div>
+          </div>
+          <div class="  ">v1.0.4-beta</div>
+        </div>
+
+        <!-- Popup de usuario -->
+        <div class="user-popup" id="userPopup" style="display:none;">
+          <div class="user-popup-info">
+            <img id="userPopupSkin" src="https://cravatar.eu/avatar/steve" class="user-popup-avatar">
+            <div>
+              <div class="user-popup-name" id="userPopupName">—</div>
+              <div class="user-popup-type" id="userPopupType"></div>
             </div>
           </div>
-          <button class="logout-btn" id="sidebarLogout">↩ Cerrar sesión</button>
-          <div class="version-tag">v1.0.0</div>
+          <div class="user-popup-divider"></div>
+          <button class="user-popup-btn" id="popupSettings">⚙ Ajustes</button>
+          <button class="user-popup-btn danger" id="popupLogout">↩ Cerrar sesión</button>
         </div>
       </aside>
 
@@ -107,13 +115,6 @@
 
         <!-- HOME PAGE -->
         <section class="page active" id="page-home">
-          <div class="home-welcome">
-            <img id="homeAvatar" src="https://cravatar.eu/avatar/steve" class="home-avatar">
-            <div>
-              <div class="home-hello" id="homeUsername">Hola, Jugador!</div>
-              <div class="home-authtype" id="homeAuthType">Modo Offline</div>
-            </div>
-          </div>
 
           <div class="play-zone">
             <div class="play-container">
@@ -122,6 +123,10 @@
                 <span class="play-text">JUGAR</span>
                 <div class="play-version-info" id="playVersionInfo">
                   <span class="play-version" id="playVersion">Seleccionar</span>
+                </div>
+                <span class="play-launch-label" id="playLaunchLabel">Iniciando</span>
+                <div class="play-inline-bar">
+                  <div class="play-inline-fill" id="playInlineFill"></div>
                 </div>
               </button>
               <button class="play-dropdown" id="playDropdown" type="button">⬏</button>
@@ -132,6 +137,9 @@
               </div>
             </div>
           </div>
+          <div class="launch-progress-bar" id="launchProgressBar">
+            <div class="launch-progress-fill" id="launchProgressFill"></div>
+          </div>
 
           <div class="home-version-info" id="homeVersionInfo" style="display:none;">
             <span class="home-version-label">Última versión:</span>
@@ -141,49 +149,29 @@
           <div class="launch-status" id="homeStatus" style="display:none;">
             <div class="status-bar">
               <div class="status-pulse"></div>
-              <div class="status-text" id="homeStatusText">Lanzando Minecraft...</div>
+              <div class="status-text" id="homeStatusText">Lanzando Minecraft</div>
             </div>
           </div>
         </section>
 
-        <!-- VERSIONS PAGE -->
+        <!-- MODPACKS PAGE -->
         <section class="page" id="page-versions">
           <div class="page-header">
-            <h1>Versiones de Minecraft</h1>
-            <div class="header-actions">
-              <label class="toggle-label">
-                <input type="checkbox" id="snapshotsToggle"> Snapshots
-              </label>
-              <button class="icon-btn" id="refreshVersions" title="Recargar">↺</button>
+            <h1>Modpacks</h1>
+            <button class="icon-btn" id="refreshModpacks" title="Recargar">↺</button>
+          </div>
+
+          <div id="modpacksList" class="modpacks-grid">
+            <div class="loading-state">
+              <div class="spinner"></div>
+              <p>Cargando modpacks...</p>
             </div>
           </div>
 
-          <div class="versions-layout">
-            <div class="versions-list" id="versionsList">
-              <div class="loading-state">
-                <div class="spinner"></div>
-                <p>Cargando versiones...</p>
-              </div>
-            </div>
-            <div class="version-detail" id="versionDetail">
-              <div class="detail-empty">
-                <div class="detail-empty-icon">◈</div>
-                <p>Selecciona una versión</p>
-              </div>
-            </div>
-          </div>
-
-          <div class="progress-bar-wrap" id="versionsProgressWrap" style="display:none">
-            <div class="progress-label" id="versionsProgressLabel">Instalando...</div>
+          <div class="progress-bar-wrap" id="modpackProgressWrap" style="display:none">
+            <div class="progress-label" id="modpackProgressLabel">Instalando</div>
             <div class="progress-bar">
-              <div class="progress-fill" id="versionsProgressFill" style="width:0%"></div>
-            </div>
-          </div>
-
-          <div class="launch-status" id="versionsStatus" style="display:none;">
-            <div class="status-bar">
-              <div class="status-pulse"></div>
-              <div class="status-text" id="versionsStatusText">Lanzando Minecraft...</div>
+              <div class="progress-fill" id="modpackProgressFill" style="width:0%"></div>
             </div>
           </div>
         </section>

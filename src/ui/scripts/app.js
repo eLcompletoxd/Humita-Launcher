@@ -1,32 +1,53 @@
 /* ═══════════════════════════════════════════
-   Humita Launcher — Renderer
+    Humita Launcher — Renderer
+    CORRECCIONES:
+    - FIX 11: setupLoginScreen() ahora solo registra listeners una vez.
+              Al hacer logout se usa loginScreenSetup (flag) para evitar
+              registrar duplicados en cada sesión.
+    - FIX 5:  loadInterruptedInstalls() ahora usa mp.id en lugar de
+              mp.version para evitar falsos positivos cuando varios
+              modpacks comparten la misma versión de Minecraft.
    ═══════════════════════════════════════════ */
 
+// ─── PUNTO 2: Estado global centralizado ─────────────────────
+
 const state = {
-  currentPage:     'home',
-  selectedVersion: null,
-  versions:        [],
-  isInstalling:    false,
-  isLaunching:     false,
+  currentPage:      'home',
+  selectedVersion:  null,
+  selectedModpack:  null,
+  versions:         [],
+  isInstalling:     false,
+  isLaunching:      false,
+  user:             null,
+  interruptedInstalls: new Set(),
 }
 
-// ─── Init ──────────────────────────────────────────────────────
+// FIX 11: flag para asegurarse de que setupLoginScreen() solo
+// registra listeners una vez durante toda la vida del proceso.
+let _loginScreenReady = false
+
+// FIX: flag para que setupApp() no acumule listeners en cada login.
+let _appReady = false
+
+// FIX: referencia al handler global del popup para poder removerlo
+// si fuera necesario (actualmente se registra una sola vez con _appReady).
+let _popupClickHandler = null
+
+// ─── Init ─────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
   const cfg = await window.api.config.getAll()
 
   if (cfg.username) {
-    // Sesión guardada → ir directo a la app
+    await loadUserState(cfg)
     showMainApp()
-    await refreshUserState()
     setupApp()
   } else {
-    // Sin sesión → mostrar pantalla de login
     showLoginScreen()
     setupLoginScreen()
   }
 })
 
-// ─── Pantallas ─────────────────────────────────────────────────
+// ─── Pantallas ────────────────────────────────────────────────
 function showLoginScreen() {
   document.getElementById('loginScreen').style.display = 'flex'
   document.getElementById('mainApp').style.display     = 'none'
@@ -37,16 +58,50 @@ function showMainApp() {
   document.getElementById('mainApp').style.display     = 'block'
 }
 
-// ─── Login Screen ──────────────────────────────────────────────
+// ─── Cargar estado del usuario en state ───────────────────────
+async function loadUserState(cfg) {
+  state.user = {
+    username: cfg.username,
+    uuid:     cfg.uuid,
+    authType: cfg.authType,
+  }
+
+  await updateSkin(cfg.username)
+
+  const popupName = document.getElementById('userPopupName')
+  const popupType = document.getElementById('userPopupType')
+  if (popupName) popupName.textContent = cfg.username
+  if (popupType) popupType.textContent = cfg.authType === 'microsoft' ? '🟢 Microsoft' : '🟡 Offline'
+
+  if (cfg.lastModpackId && cfg.lastVersion) {
+    state.selectedVersion = cfg.lastVersion
+    state.selectedModpack = {
+      id:       cfg.lastModpackId,
+      name:     cfg.lastModpackName || cfg.lastVersion,
+      version:  cfg.lastVersion,
+      serverIp: cfg.lastServerIp || '',
+    }
+    updatePlayButton()
+  }
+}
+
+// ─── Login Screen ─────────────────────────────────────────────
+
+// FIX 11: se usa _loginScreenReady para garantizar que los
+// addEventListener se llaman exactamente UNA vez. Antes, cada
+// llamada a logout() → setupLoginScreen() duplicaba los handlers,
+// causando que un click en "Microsoft" disparase el handler N veces.
 function setupLoginScreen() {
+  if (_loginScreenReady) return
+  _loginScreenReady = true
+
   const btnMs      = document.getElementById('loginBtnMs')
   const btnOffline = document.getElementById('loginBtnOffline')
-  const msg        = document.getElementById('loginMsg')
 
   btnMs.addEventListener('click', async () => {
     btnMs.disabled      = true
     btnOffline.disabled = true
-    btnMs.textContent   = '⏳ Abriendo Microsoft...'
+    btnMs.textContent   = 'Abriendo Microsoft...'
     setLoginMsg('Se abrirá una ventana de Microsoft. Inicia sesión ahí.', 'info')
 
     const res = await window.api.auth.loginMicrosoft()
@@ -56,15 +111,12 @@ function setupLoginScreen() {
     btnMs.innerHTML     = '<span class="login-btn-icon">⊞</span> Iniciar sesión con Microsoft'
 
     if (res.success) {
-      setLoginMsg(`✅ Bienvenido, ${res.username}!`, 'success')
-      await updateSkin(res.username)
-      setTimeout(async () => {
-        showMainApp()
-        await refreshUserState()
-        setupApp()
-      }, 800)
+      setLoginMsg(`¡Bienvenido, ${res.username}!`, 'success')
+      const cfg = await window.api.config.getAll()
+      await loadUserState(cfg)
+      setTimeout(() => { showMainApp(); setupApp() }, 800)
     } else {
-      setLoginMsg(`❌ ${res.message}`, 'error')
+      setLoginMsg(res.message, 'error')
     }
   })
 
@@ -79,15 +131,12 @@ function setupLoginScreen() {
     closeModal('offlineModal')
 
     if (res.success) {
-      setLoginMsg(`✅ Bienvenido, ${res.username}!`, 'success')
-      await updateSkin(res.username)
-      setTimeout(async () => {
-        showMainApp()
-        await refreshUserState()
-        setupApp()
-      }, 600)
+      setLoginMsg(`¡Bienvenido, ${res.username}!`, 'success')
+      const cfg = await window.api.config.getAll()
+      await loadUserState(cfg)
+      setTimeout(() => { showMainApp(); setupApp() }, 600)
     } else {
-      setLoginMsg(`❌ ${res.message}`, 'error')
+      setLoginMsg(res.message, 'error')
     }
   })
 
@@ -99,303 +148,359 @@ function setupLoginScreen() {
 
 function setLoginMsg(msg, type = 'info') {
   const el = document.getElementById('loginMsg')
+  if (!el) return
   el.textContent = msg
   el.style.color = type === 'success' ? 'var(--success)'
                  : type === 'error'   ? 'var(--error)'
                  : 'var(--text-secondary)'
 }
 
-// ─── Setup App (solo se llama 1 vez tras login) ───────────────
+// ─── Setup App ────────────────────────────────────────────────
 function setupApp() {
+  // FIX: guard para que los addEventListener no se acumulen en cada login.
+  // Sin esto, cada logout → login duplica todos los handlers, y el listener
+  // global de document.click del popup termina bloqueando los botones de
+  // la pantalla de login en la segunda sesión.
+  if (_appReady) return
+  _appReady = true
+
   setupNav()
-  setupVersions()
-  setupLogs()
-  setupSidebarLogout()
+  setupPlayZone()
+  setupUserPopup()
   setupSettings()
+  setupLogs()
+  document.getElementById('refreshModpacks')?.addEventListener('click', loadModpacks)
 }
 
-// ─── Navigation ────────────────────────────────────────────────
+// ─── Navigation ───────────────────────────────────────────────
 function navigate(page) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'))
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'))
   document.getElementById(`page-${page}`)?.classList.add('active')
   document.querySelector(`.nav-btn[data-page="${page}"]`)?.classList.add('active')
   state.currentPage = page
-  if (page === 'versions' && state.versions.length === 0) loadVersions()
+  if (page === 'versions') loadModpacks()
   if (page === 'settings') loadSettingsValues()
 }
 
 function setupNav() {
-  document.querySelectorAll('.nav-btn').forEach(btn => {
+  document.querySelectorAll('.nav-btn').forEach(btn =>
     btn.addEventListener('click', () => navigate(btn.dataset.page))
-  })
+  )
 }
 
 // ─── Skin ─────────────────────────────────────────────────────
 async function updateSkin(username) {
-  const url = `https://cravatar.eu/avatar/${encodeURIComponent(username)}`
-  // Sidebar
-  const sidebarSkin = document.getElementById('userSkin')
-  if (sidebarSkin) {
-    sidebarSkin.src = url
-    sidebarSkin.onerror = () => {
-      sidebarSkin.src = 'https://cravatar.eu/avatar/steve'
-    }
-  }
-  // Home avatar
-  const homeAvatar = document.getElementById('homeAvatar')
-  if (homeAvatar) {
-    homeAvatar.src = url
-    homeAvatar.onerror = () => {
-      homeAvatar.src = 'https://cravatar.eu/avatar/steve'
-    }
-  }
+  const url      = `https://cravatar.eu/avatar/${encodeURIComponent(username)}`
+  const fallback = 'https://cravatar.eu/avatar/steve'
+  ;['userSkin', 'userPopupSkin'].forEach(id => {
+    const el = document.getElementById(id)
+    if (el) { el.src = url; el.onerror = () => { el.src = fallback } }
+  })
 }
 
-// ─── User state ────────────────────────────────────────────────
-async function refreshUserState() {
-  const cfg = await window.api.config.getAll()
-  if (!cfg.username) return
+// ─── User Popup ───────────────────────────────────────────────
+function setupUserPopup() {
+  const chip  = document.getElementById('userChip')
+  const popup = document.getElementById('userPopup')
 
-  // Skin
-  await updateSkin(cfg.username)
+  chip.addEventListener('click', e => {
+    e.stopPropagation()
+    popup.style.display = popup.style.display !== 'none' ? 'none' : 'flex'
+  })
+  document.addEventListener('click', () => {
+    // Solo cerrar el popup si el mainApp está visible; si no,
+    // el evento podría propagarse mal sobre la pantalla de login.
+    if (document.getElementById('mainApp').style.display !== 'none') {
+      popup.style.display = 'none'
+    }
+  })
+  popup.addEventListener('click', e => e.stopPropagation())
 
-  // Sidebar
-  document.getElementById('userName').textContent = cfg.username
-  document.getElementById('userType').textContent =
-    cfg.authType === 'microsoft' ? '🟢 Microsoft' : '🟡 Offline'
+  document.getElementById('popupSettings').addEventListener('click', () => {
+    popup.style.display = 'none'
+    navigate('settings')
+  })
 
-  // Home
-  document.getElementById('homeUsername').textContent =
-    `Hola, ${cfg.username}!`
-  document.getElementById('homeAuthType').textContent =
-    cfg.authType === 'microsoft' ? 'Cuenta Microsoft Premium' : 'Modo Offline'
-
-  // Play button
-  document.getElementById('playBtn').disabled = false
-
-  // Last version
-  const lastVer = cfg.lastVersion
-  if (lastVer) {
-    state.selectedVersion = lastVer
-    document.getElementById('playVersion').textContent = lastVer
-  }
-}
-
-// ─── Logout ───────────────────────────────────────────────────
-function setupSidebarLogout() {
-  document.getElementById('sidebarLogout').addEventListener('click', async () => {
+  document.getElementById('popupLogout').addEventListener('click', async () => {
+    popup.style.display = 'none'
     await window.api.auth.logout()
-    // Limpiar skin
-    document.getElementById('userSkin').src  = 'https://cravatar.eu/avatar/steve'
-    document.getElementById('homeAvatar').src = 'https://cravatar.eu/avatar/steve'
-    // Volver a pantalla de login
+    state.user            = null
+    state.selectedVersion = null
+    state.selectedModpack = null
+
+    // Resetear skin
+    ;['userSkin', 'userPopupSkin'].forEach(id => {
+      const el = document.getElementById(id)
+      if (el) el.src = 'https://cravatar.eu/avatar/steve'
+    })
+
+    // Resetear botón play
+    updatePlayButton()
+
+    // Resetear campos de la pantalla de login
+    const loginMsg = document.getElementById('loginMsg')
+    if (loginMsg) { loginMsg.textContent = ''; loginMsg.style.color = '' }
+    const offlineInput = document.getElementById('offlineUsername')
+    if (offlineInput) offlineInput.value = ''
+
+    // Re-habilitar botones de login por si quedaron disabled de una sesión anterior
+    const btnMs      = document.getElementById('loginBtnMs')
+    const btnOffline = document.getElementById('loginBtnOffline')
+    if (btnMs)      { btnMs.disabled = false; btnMs.innerHTML = '<span class="login-btn-icon"></span> Iniciar sesión con Microsoft' }
+    if (btnOffline) btnOffline.disabled = false
+
     showLoginScreen()
-    setupLoginScreen()
+    // FIX 11: ya NO se llama setupLoginScreen() aquí porque los listeners
+
+    // ya están registrados desde la primera vez que se mostró la pantalla.
   })
 }
 
-// ─── Versions ──────────────────────────────────────────────────
-function setupVersions() {
-  document.getElementById('refreshVersions').addEventListener('click', loadVersions)
-  document.getElementById('snapshotsToggle').addEventListener('change', loadVersions)
-  
-  // Botón de play - lanzar juego
+// ─── Play zone ────────────────────────────────────────────────
+function setupPlayZone() {
   document.getElementById('playBtn').addEventListener('click', (e) => {
-    // Si hace clic en el dropdown, no lanzar
     if (e.target.closest('.play-dropdown')) return
-    if (state.selectedVersion) launchGame(state.selectedVersion)
+    if (state.selectedVersion && state.selectedModpack && !state.isLaunching) {
+      launchGame(state.selectedVersion, state.selectedModpack.serverIp, state.selectedModpack.id)
+    }
   })
-  
-  // Botón dropdown - abrir versiones
-  document.getElementById('playDropdown').addEventListener('click', () => {
-    navigate('versions')
-    if (state.versions.length === 0) loadVersions()
-  })
+  document.getElementById('playDropdown').addEventListener('click', () => navigate('versions'))
 }
 
-async function loadVersions() {
-  const list = document.getElementById('versionsList')
-  list.innerHTML = `<div class="loading-state"><div class="spinner"></div><p>Cargando versiones...</p></div>`
+function updatePlayButton() {
+  const playVersion = document.getElementById('playVersion')
+  const playBtn     = document.getElementById('playBtn')
 
-  const snapshots = document.getElementById('snapshotsToggle').checked
-  const res       = await window.api.versions.fetch(snapshots)
+  if (state.selectedModpack && state.user) {
+    playVersion.textContent = `${state.selectedModpack.name} · ${state.selectedModpack.version}`
+    playBtn.disabled = false
+  } else {
+    playVersion.textContent = 'Seleccionar modpack'
+    playBtn.disabled = true
+  }
+}
 
-  if (!res.success) {
-    list.innerHTML = `<div class="loading-state"><p style="color:var(--error)">❌ ${res.error}</p></div>`
+// ─── Modpacks ─────────────────────────────────────────────────
+
+// FIX 5: se consulta por mp.id (no mp.version) para que dos modpacks
+// que compartan la misma versión base de Minecraft no activen el badge
+// "interrumpida" el uno por el otro.
+async function loadInterruptedInstalls(modpacks) {
+  state.interruptedInstalls.clear()
+  for (const mp of modpacks) {
+    const interrupted = await window.api.installer.hasInterrupted(mp.id)
+    if (interrupted) state.interruptedInstalls.add(mp.id)
+  }
+}
+
+async function loadModpacks() {
+  const grid = document.getElementById('modpacksList')
+  grid.innerHTML = `<div class="loading-state"><div class="spinner"></div><p>Cargando modpacks...</p></div>`
+
+  const res = await window.api.modpacks.fetch()
+
+  if (!res.modpacks || res.modpacks.length === 0) {
+    grid.innerHTML = `<div class="loading-state"><p style="color:var(--error)">No se encontraron modpacks.</p></div>`
     return
   }
 
-  state.versions = res.versions
-  list.innerHTML = ''
+  state.versions = res.modpacks
 
-  res.versions.forEach(ver => {
-    const row      = document.createElement('div')
-    row.className  = 'version-row'
-    row.dataset.id = ver.id
-    const isLatest = ver.id === res.latest
+  await loadInterruptedInstalls(res.modpacks)
 
-    row.innerHTML = `
-      ${isLatest ? `<span class="ver-latest">⭐ LATEST</span>` : ''}
-      <span class="ver-id">${ver.id}</span>
-      <span class="ver-type ${ver.type}">${ver.type}</span>
-      ${ver.installed ? `<span class="ver-installed">✅</span>` : ''}
-    `
-    row.addEventListener('click', () => selectVersion(ver))
-    list.appendChild(row)
-  })
+  grid.innerHTML = ''
+
+  if (res.offline) {
+    const notice = document.createElement('div')
+    notice.className   = 'modpack-offline-notice'
+    notice.textContent = `⚠ Sin conexión al servidor de modpacks. ${res.offlineReason ? `(${res.offlineReason})` : ''} Mostrando datos de ejemplo.`
+    grid.appendChild(notice)
+  }
+
+  res.modpacks.forEach(mp => grid.appendChild(createModpackCard(mp)))
 }
 
-function selectVersion(ver) {
-  document.querySelectorAll('.version-row').forEach(r => r.classList.remove('selected'))
-  document.querySelector(`.version-row[data-id="${ver.id}"]`)?.classList.add('selected')
-  state.selectedVersion = ver.id
+function createModpackCard(mp) {
+  const card      = document.createElement('div')
+  card.className  = 'modpack-card'
+  card.dataset.id = mp.id
+  card.style.setProperty('--mp-color', mp.color || '#27ae60')
 
-  // Actualizar botón de play
-  document.getElementById('playVersion').textContent = ver.id
-  document.getElementById('playBtn').disabled = !ver.installed
-  
-  // Guardar como última versión
-  window.api.config.set('lastVersion', ver.id)
+  const hasInterrupted = state.interruptedInstalls.has(mp.id)
 
-  const detail = document.getElementById('versionDetail')
-  const date   = new Date(ver.releaseTime).toLocaleDateString('es-CL')
+  const logoHtml = mp.logo
+    ? `<img src="${mp.logo}" class="modpack-logo" onerror="this.style.display='none'">`
+    : `<div class="modpack-logo-placeholder" style="background:${mp.color || '#27ae60'}">${mp.name.charAt(0).toUpperCase()}</div>`
 
-  detail.innerHTML = `
-    <div class="detail-title">${ver.id}</div>
-    <div class="detail-meta">
-      <span><b>Tipo:</b> ${ver.type}</span>
-      <span><b>Fecha:</b> ${date}</span>
-      <span><b>Estado:</b> ${ver.installed ? '✅ Instalado' : '⬇ No instalado'}</span>
+  const interruptedBadge = hasInterrupted
+    ? `<span class="modpack-badge interrupted" title="La instalación anterior fue interrumpida. Se reanudará automáticamente.">⚠ Interrumpida</span>`
+    : ''
+
+  const installBtnText = hasInterrupted
+    ? '↺ Reanudar instalación'
+    : mp.installed
+      ? '↺ Reinstalar'
+      : '⬇ Instalar'
+
+  card.innerHTML = `
+    <div class="modpack-card-header">
+      ${logoHtml}
+      <div class="modpack-info">
+        <div class="modpack-name">${mp.name}</div>
+        <div class="modpack-version">Minecraft ${mp.version}</div>
+        <div class="modpack-server">${mp.serverIp}</div>
+      </div>
+      ${mp.installed ? `<span class="modpack-badge installed">Instalado</span>` : ''}
+      ${interruptedBadge}
     </div>
-    <div class="detail-actions">
-      <button class="btn-primary"   id="installBtn">${ver.installed ? '♻ Reinstalar' : '⬇ Instalar'}</button>
-      <button class="btn-secondary" id="launchVerBtn" ${!ver.installed ? 'disabled' : ''}>▶ Lanzar</button>
+    <div class="modpack-desc">${mp.description || ''}</div>
+    <div class="modpack-mods-count">${mp.mods?.length || 0} mods</div>
+    <div class="modpack-actions">
+      <button class="modpack-btn-install ${hasInterrupted ? 'resume' : ''}">${installBtnText}</button>
+      <button class="modpack-btn-play" ${!mp.installed ? 'disabled' : ''}>▶ Jugar</button>
     </div>
   `
-  document.getElementById('installBtn').addEventListener('click',   () => installVersion(ver))
-  document.getElementById('launchVerBtn').addEventListener('click', () => launchGame(ver.id))
+
+  card.querySelector('.modpack-btn-install').addEventListener('click', () => installModpack(mp))
+  card.querySelector('.modpack-btn-play').addEventListener('click',    () => selectAndLaunchModpack(mp))
+
+  return card
 }
 
-async function installVersion(ver) {
+async function installModpack(mp) {
   if (state.isInstalling) return
   state.isInstalling = true
 
-  const wrap  = document.getElementById('progressWrap')
-  const fill  = document.getElementById('progressFill')
-  const label = document.getElementById('progressLabel')
+  const wrap  = document.getElementById('modpackProgressWrap')
+  const fill  = document.getElementById('modpackProgressFill')
+  const label = document.getElementById('modpackProgressLabel')
 
   wrap.style.display = 'block'
   fill.style.width   = '0%'
   label.style.color  = ''
+  label.textContent  = state.interruptedInstalls.has(mp.id)
+    ? 'Reanudando instalación anterior...'
+    : 'Preparando instalación...'
 
-  window.api.installer.onProgress(({ message, percent }) => {
+  window.api.modpacks.onProgress(({ message, percent }) => {
     label.textContent = message
     fill.style.width  = `${percent}%`
   })
 
-  const res = await window.api.installer.install(ver.id)
+  const res = await window.api.modpacks.install(mp.id, mp)
   state.isInstalling = false
 
   if (res.success) {
-    label.textContent = `✅ ${res.message}`
+    label.textContent = res.message
     fill.style.width  = '100%'
-    ver.installed     = true
-    await window.api.config.set('lastVersion', ver.id)
-    await refreshUserState()
-    setTimeout(() => { wrap.style.display = 'none' }, 3000)
-    selectVersion(ver)
+    mp.installed      = true
+    state.interruptedInstalls.delete(mp.id)
+    selectModpack(mp)
+    setTimeout(() => { wrap.style.display = 'none'; loadModpacks() }, 2500)
   } else {
     label.style.color = 'var(--error)'
-    label.textContent = `❌ ${res.message}`
-    setTimeout(() => { wrap.style.display = 'none'; label.style.color = '' }, 4000)
+    label.textContent = res.message
+    setTimeout(() => { wrap.style.display = 'none'; label.style.color = '' }, 5000)
   }
 }
 
-async function launchGame(versionId) {
+// ─── PUNTO 2: selectModpack actualiza state y luego la UI ────
+function selectModpack(mp) {
+  state.selectedVersion = mp.version
+  state.selectedModpack = mp
+
+  window.api.config.set('lastVersion',     mp.version)
+  window.api.config.set('lastModpackId',   mp.id)
+  window.api.config.set('lastModpackName', mp.name)
+  window.api.config.set('lastServerIp',    mp.serverIp)
+
+  updatePlayButton()
+}
+
+function selectAndLaunchModpack(mp) {
+  selectModpack(mp)
+  navigate('home')
+  launchGame(mp.version, mp.serverIp, mp.id)
+}
+
+// ─── Launch ───────────────────────────────────────────────────
+async function launchGame(versionId, serverIp, modpackId) {
   if (state.isLaunching) return
-  const cfg = await window.api.config.getAll()
-
   state.isLaunching = true
-  
-  // Referencias a elementos
-  const playBtn = document.getElementById('playBtn')
-  const playLoading = document.getElementById('playLoading')
-  const playProgress = document.getElementById('playProgress')
-  const playVersionInfo = document.getElementById('playVersionInfo')
-  const playDropdown = document.getElementById('playDropdown')
-  const playText = playBtn?.querySelector('.play-text')
-  
-  // Cambiar estado del botón a cargando
-  if (playBtn) {
-    playBtn.classList.add('loading')
-    playBtn.disabled = true
-  }
-  
-  if (playText) playText.textContent = 'LANZANDO'
-  
-  // Ocultar versión y dropdown
-  if (playVersionInfo) playVersionInfo.style.display = 'none'
-  if (playDropdown) playDropdown.style.display = 'none'
-  
-  // Mostrar barra de progreso
-  if (playLoading) playLoading.style.display = 'flex'
-  
-  // Animar progreso inicial (crecer lentamente)
-  let currentProgress = 10
-  const progressInterval = setInterval(() => {
-    if (currentProgress < 90) {
-      currentProgress += Math.random() * 20
-      if (playProgress) playProgress.style.width = currentProgress + '%'
-    }
-  }, 300)
 
-  if (cfg.authType === 'microsoft') {
-    // Timeout de 5 segundos para refresh
-    const refreshPromise = window.api.auth.refresh()
-    const timeoutPromise = new Promise(resolve => 
-      setTimeout(() => resolve({ success: false, message: 'Timeout' }), 5000)
-    )
-    
-    await Promise.race([refreshPromise, timeoutPromise])
-  }
+  const container    = document.getElementById('playBtn')?.closest('.play-container')
+  const launchLabel  = document.getElementById('playLaunchLabel')
+  const progressBar  = document.getElementById('launchProgressBar')
+  const progressFill = document.getElementById('launchProgressFill')
+
+  if (container)    container.classList.add('is-launching')
+  if (launchLabel)  launchLabel.textContent = 'Lanzando'
+  if (progressFill) progressFill.style.width = '0%'
+  if (progressBar)  { progressBar.offsetHeight; progressBar.classList.add('visible') }
+
+  let pct  = 5
+  const tick = setInterval(() => {
+    if (pct < 85) {
+      pct += Math.random() * 7
+      if (progressFill) progressFill.style.width = Math.min(pct, 85) + '%'
+    }
+  }, 350)
 
   window.api.launcher.onLog(line => {
-    // Actualizar progreso basado en logs
-    if (line.includes('Iniciando') || line.includes('Loading')) {
-      currentProgress = Math.max(currentProgress, 50)
-    }
-    if (playProgress && currentProgress < 90) {
-      playProgress.style.width = currentProgress + '%'
-    }
+    if (!launchLabel) return
+    if (line.includes('Iniciando'))  launchLabel.textContent = 'Lanzando'
+    if (line.includes('Loading'))    launchLabel.textContent = 'Cargando'
+    if (line.includes('AUTH'))       launchLabel.textContent = 'Verificando sesión'
   })
-  
-  const res = await window.api.launcher.launch(versionId)
-  clearInterval(progressInterval)
 
-  state.isLaunching = false
-  
-  // Completar la barra de progreso
-  if (playProgress) playProgress.style.width = '100%'
-  
-  // Restaurar botón después de 1.5s
-  setTimeout(() => {
-    if (playBtn) {
-      playBtn.classList.remove('loading')
-      playBtn.disabled = false
-      playText.textContent = 'JUGAR'
+  let res = { success: false, message: 'Error inesperado al lanzar el juego.' }
+
+  try {
+    const cfg = await window.api.config.getAll()
+
+    if (cfg.authType === 'microsoft') {
+      await Promise.race([
+        window.api.auth.refresh(),
+        new Promise(r => setTimeout(r, 5000)),
+      ])
     }
-    
-    // Mostrar versión y dropdown nuevamente
-    if (playVersionInfo) playVersionInfo.style.display = 'flex'
-    if (playDropdown) playDropdown.style.display = 'flex'
-    
-    if (playLoading) playLoading.style.display = 'none'
-    if (playProgress) playProgress.style.width = '0%'
-  }, 1500)
+
+    res = await window.api.launcher.launch(versionId, serverIp, modpackId)
+
+  } catch (err) {
+    res = { success: false, message: err.message || 'Error inesperado al lanzar el juego.' }
+
+  } finally {
+    clearInterval(tick)
+    state.isLaunching = false
+
+    if (progressFill) progressFill.style.width = '100%'
+
+    if (!res.success) {
+      const launchStatus = document.getElementById('homeStatus')
+      const launchText   = document.getElementById('homeStatusText')
+      if (launchStatus && launchText) {
+        launchStatus.style.display = 'block'
+        launchText.textContent     = `Error: ${res.message}`
+        launchText.style.color     = 'var(--error)'
+        setTimeout(() => {
+          launchStatus.style.display = 'none'
+          launchText.style.color     = ''
+        }, 6000)
+      }
+    }
+
+    setTimeout(() => {
+      if (container)    container.classList.remove('is-launching')
+      if (launchLabel)  launchLabel.textContent = 'Lanzando'
+      if (progressBar)  progressBar.classList.remove('visible')
+      if (progressFill) progressFill.style.width = '0%'
+    }, 1000)
+  }
 }
 
-// ─── Settings ──────────────────────────────────────────────────
+// ─── Settings ─────────────────────────────────────────────────
 async function loadSettingsValues() {
   const cfg = await window.api.config.getAll()
   document.getElementById('javaPath').value = cfg.javaPath     || ''
@@ -413,18 +518,19 @@ function setupSettings() {
     if (javaPath) {
       document.getElementById('javaPath').value = javaPath
       const version = await window.api.java.getVersion(javaPath)
-      note.textContent = `✅ Java ${version}`
+      note.textContent = `Java ${version} ✓`
       note.style.color = 'var(--success)'
     } else {
-      note.textContent = '❌ Java no encontrado. Descárgalo desde java.com'
+      note.textContent = 'Java no encontrado. Descárgalo desde adoptium.net'
       note.style.color = 'var(--error)'
     }
   })
 
   document.getElementById('saveJava').addEventListener('click', async () => {
-    await window.api.config.set('javaPath', document.getElementById('javaPath').value.trim())
+    const val  = document.getElementById('javaPath').value.trim()
     const note = document.getElementById('javaNote')
-    note.textContent = '✅ Guardado.'
+    await window.api.config.set('javaPath', val)
+    note.textContent = 'Guardado ✓'
     note.style.color = 'var(--success)'
   })
 
@@ -438,7 +544,7 @@ function setupSettings() {
   })
 }
 
-// ─── Logs ──────────────────────────────────────────────────────
+// ─── Logs ─────────────────────────────────────────────────────
 function setupLogs() {
   const clearBtn = document.getElementById('clearLogs')
   if (clearBtn) {
@@ -450,12 +556,14 @@ function setupLogs() {
 }
 
 function appendLog(line) {
-  const out    = document.getElementById('logsOutput')
+  const out = document.getElementById('logsOutput')
+  if (!out) return
   out.textContent += line + '\n'
   out.scrollTop    = out.scrollHeight
 }
 
-// ─── Modal ─────────────────────────────────────────────────────
+// ─── Modal ────────────────────────────────────────────────────
 function closeModal(id) {
-  document.getElementById(id).style.display = 'none'
+  const el = document.getElementById(id)
+  if (el) el.style.display = 'none'
 }

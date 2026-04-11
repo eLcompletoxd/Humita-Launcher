@@ -1,4 +1,13 @@
-const { execSync, spawnSync } = require('child_process')
+/**
+ * utils/javaFinder.js
+ * CORRECCIÓN:
+ * - FIX 9: la ruta obtenida desde PATH/which ahora se valida con
+ *   verifyJava() antes de retornarla, en lugar de devolverla a ciegas.
+ *   Esto evita que shims rotos (jenv, sdkman mal configurado, etc.)
+ *   lleguen al launcher y causen un error críptico al intentar lanzar.
+ */
+
+const { spawnSync } = require('child_process')
 const fs   = require('fs')
 const path = require('path')
 const os   = require('os')
@@ -19,12 +28,18 @@ const COMMON_PATHS = {
 }
 
 function findJava() {
-  // 1. From PATH
+  // 1. Desde PATH — FIX 9: verificar la ruta con verifyJava() antes de usarla
   try {
-    const result = spawnSync('java', ['-version'], { encoding: 'utf-8' })
-    if (result.status === 0) {
-      const which = spawnSync(os.platform() === 'win32' ? 'where' : 'which', ['java'], { encoding: 'utf-8' })
-      if (which.status === 0) return which.stdout.trim().split('\n')[0].trim()
+    const whichCmd = os.platform() === 'win32' ? 'where' : 'which'
+    const which = spawnSync(whichCmd, ['java'], { encoding: 'utf-8' })
+    if (which.status === 0) {
+      const candidates = which.stdout.trim().split('\n')
+      for (const candidate of candidates) {
+        const resolved = candidate.trim()
+        // FIX 9: antes se retornaba el primer resultado sin validar.
+        // Ahora se verifica que realmente ejecute (descarta shims rotos).
+        if (resolved && verifyJava(resolved)) return resolved
+      }
     }
   } catch {}
 
@@ -35,7 +50,7 @@ function findJava() {
     if (verifyJava(bin)) return bin
   }
 
-  // 3. Common paths
+  // 3. Rutas comunes
   const platform = os.platform()
   const paths = COMMON_PATHS[platform] || []
 
