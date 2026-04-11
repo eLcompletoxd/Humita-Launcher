@@ -12,7 +12,7 @@
 // ─── PUNTO 2: Estado global centralizado ─────────────────────
 
 const state = {
-  currentPage:      'home',
+  currentPage:      'versions',
   selectedVersion:  null,
   selectedModpack:  null,
   versions:         [],
@@ -20,6 +20,7 @@ const state = {
   isLaunching:      false,
   user:             null,
   interruptedInstalls: new Set(),
+  offlineNotice:    '',
 }
 
 // FIX 11: flag para asegurarse de que setupLoginScreen() solo
@@ -41,6 +42,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     await loadUserState(cfg)
     showMainApp()
     setupApp()
+    await loadModpacks()
   } else {
     showLoginScreen()
     setupLoginScreen()
@@ -114,7 +116,7 @@ function setupLoginScreen() {
       setLoginMsg(`¡Bienvenido, ${res.username}!`, 'success')
       const cfg = await window.api.config.getAll()
       await loadUserState(cfg)
-      setTimeout(() => { showMainApp(); setupApp() }, 800)
+      setTimeout(async () => { showMainApp(); setupApp(); await loadModpacks() }, 800)
     } else {
       setLoginMsg(res.message, 'error')
     }
@@ -134,7 +136,7 @@ function setupLoginScreen() {
       setLoginMsg(`¡Bienvenido, ${res.username}!`, 'success')
       const cfg = await window.api.config.getAll()
       await loadUserState(cfg)
-      setTimeout(() => { showMainApp(); setupApp() }, 600)
+      setTimeout(async () => { showMainApp(); setupApp(); await loadModpacks() }, 600)
     } else {
       setLoginMsg(res.message, 'error')
     }
@@ -164,7 +166,6 @@ function setupApp() {
   if (_appReady) return
   _appReady = true
 
-  setupNav()
   setupPlayZone()
   setupUserPopup()
   setupSettings()
@@ -175,18 +176,9 @@ function setupApp() {
 // ─── Navigation ───────────────────────────────────────────────
 function navigate(page) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'))
-  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'))
   document.getElementById(`page-${page}`)?.classList.add('active')
-  document.querySelector(`.nav-btn[data-page="${page}"]`)?.classList.add('active')
   state.currentPage = page
-  if (page === 'versions') loadModpacks()
   if (page === 'settings') loadSettingsValues()
-}
-
-function setupNav() {
-  document.querySelectorAll('.nav-btn').forEach(btn =>
-    btn.addEventListener('click', () => navigate(btn.dataset.page))
-  )
 }
 
 // ─── Skin ─────────────────────────────────────────────────────
@@ -265,12 +257,12 @@ function setupPlayZone() {
       launchGame(state.selectedVersion, state.selectedModpack.serverIp, state.selectedModpack.id)
     }
   })
-  document.getElementById('playDropdown').addEventListener('click', () => navigate('versions'))
 }
 
 function updatePlayButton() {
   const playVersion = document.getElementById('playVersion')
   const playBtn     = document.getElementById('playBtn')
+  if (!playVersion || !playBtn) return
 
   if (state.selectedModpack && state.user) {
     playVersion.textContent = `${state.selectedModpack.name} · ${state.selectedModpack.version}`
@@ -306,19 +298,67 @@ async function loadModpacks() {
   }
 
   state.versions = res.modpacks
+  state.offlineNotice = res.offline
+    ? `⚠ Sin conexión al servidor de modpacks. ${res.offlineReason ? `(${res.offlineReason})` : ''} Mostrando datos de ejemplo.`
+    : ''
 
   await loadInterruptedInstalls(res.modpacks)
+  renderModpackSidebar(res.modpacks)
+
+  const targetId = state.selectedModpack?.id && res.modpacks.some(mp => mp.id === state.selectedModpack.id)
+    ? state.selectedModpack.id
+    : res.modpacks[0].id
+  selectSidebarModpack(targetId)
+}
+
+function renderModpackSidebar(modpacks) {
+  const sidebar = document.getElementById('sidebarModpacks')
+  if (!sidebar) return
+
+  sidebar.innerHTML = ''
+  modpacks.forEach(mp => {
+    const btn = document.createElement('button')
+    btn.className = 'nav-btn nav-modpack-btn'
+    btn.dataset.modpackId = mp.id
+    btn.title = mp.name
+    btn.innerHTML = `<span class="nav-icon">🧩</span><span class="nav-label">${mp.name}</span>`
+    btn.addEventListener('click', () => selectSidebarModpack(mp.id))
+    sidebar.appendChild(btn)
+  })
+}
+
+function selectSidebarModpack(modpackId) {
+  const mp = state.versions.find(item => item.id === modpackId)
+  if (!mp) return
+
+  selectModpack(mp)
+  navigate('versions')
+  updateSidebarActiveModpack(modpackId)
+  renderSelectedModpack(mp)
+}
+
+function updateSidebarActiveModpack(modpackId) {
+  document.querySelectorAll('.nav-modpack-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.modpackId === modpackId)
+  })
+}
+
+function renderSelectedModpack(mp) {
+  const grid = document.getElementById('modpacksList')
+  const title = document.getElementById('modpackTitle')
+  if (!grid) return
 
   grid.innerHTML = ''
+  if (title) title.textContent = mp.name
 
-  if (res.offline) {
+  if (state.offlineNotice) {
     const notice = document.createElement('div')
-    notice.className   = 'modpack-offline-notice'
-    notice.textContent = `⚠ Sin conexión al servidor de modpacks. ${res.offlineReason ? `(${res.offlineReason})` : ''} Mostrando datos de ejemplo.`
+    notice.className = 'modpack-offline-notice'
+    notice.textContent = state.offlineNotice
     grid.appendChild(notice)
   }
 
-  res.modpacks.forEach(mp => grid.appendChild(createModpackCard(mp)))
+  grid.appendChild(createModpackCard(mp))
 }
 
 function createModpackCard(mp) {
@@ -420,7 +460,7 @@ function selectModpack(mp) {
 
 function selectAndLaunchModpack(mp) {
   selectModpack(mp)
-  navigate('home')
+  navigate('versions')
   launchGame(mp.version, mp.serverIp, mp.id)
 }
 

@@ -88,7 +88,7 @@ body::before {
 
 /* ── Sidebar ──────────────────────────────── */
 .sidebar {
-  width: 60px;
+  width: var(--sidebar-w);
   background: var(--bg-secondary);
   border-right: 1px solid var(--border);
   display: flex;
@@ -103,7 +103,7 @@ body::before {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  padding: 0 6px;
+  padding: 0 10px;
   flex: 1;
   width: 100%;
 }
@@ -111,9 +111,10 @@ body::before {
 .nav-btn {
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
+  gap: 10px;
   width: 100%;
-  padding: 10px 0;
+  padding: 10px 12px;
   background: transparent;
   border: none;
   border-radius: var(--radius);
@@ -125,6 +126,13 @@ body::before {
 .nav-btn:hover  { background: var(--accent-dim); color: var(--text-primary); }
 .nav-btn.active { background: var(--accent-dim); color: var(--accent); }
 .nav-icon { line-height: 1; }
+.nav-label {
+  font-size: 12px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 .sidebar-footer {
   display: flex;
@@ -270,7 +278,7 @@ body::before {
 
 .play-zone {
   display:flex; flex-direction:column; align-items:center; gap:8px;
-  justify-content:center; margin-top:350px; margin-bottom:0px;
+  justify-content:center; margin-top:18px; margin-bottom:20px;
 }
 
 .play-container {
@@ -282,8 +290,8 @@ body::before {
   overflow: hidden;
   box-shadow: 0 4px 20px rgba(0,0,0,0.4);
   position: relative;
-  margin-top: 100px;
-  margin-right: 60px;
+  margin-top: 0;
+  margin-right: 0;
   transition: transform .15s;
 }
 .play-container:hover:not(.is-launching) {
