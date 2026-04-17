@@ -14,7 +14,10 @@ const fs   = require('fs')
 const path = require('path')
 const os   = require('os')
 
-const STATE_DIR = path.join(os.homedir(), '.humita-launcher', 'install-state')
+const _BASE_DIR = os.platform() === 'win32'
+  ? path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), '.humita')
+  : path.join(os.homedir(), '.humita')
+const STATE_DIR = path.join(_BASE_DIR, 'install-state')
 
 // ─── Helpers de disco ────────────────────────────────────────────────────────
 

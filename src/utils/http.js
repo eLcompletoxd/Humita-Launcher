@@ -202,4 +202,28 @@ function friendlyError(err) {
   return err.message || 'Error desconocido'
 }
 
-module.exports = { fetchJSON, download, friendlyError, NetworkError, HttpError }
+/**
+ * Descarga con reintentos automáticos.
+ * Reintenta hasta maxRetries veces con backoff exponencial en errores de red.
+ * No reintenta errores HTTP 4xx (son definitivos).
+ */
+async function downloadWithRetry(url, dest, onProgress, timeoutMs = 20000, maxRetries = 3) {
+  let lastErr
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      await download(url, dest, onProgress, timeoutMs)
+      return
+    } catch (err) {
+      lastErr = err
+      // No reintentar errores HTTP 4xx — son definitivos
+      if (err instanceof HttpError && err.statusCode < 500) throw err
+      if (attempt < maxRetries) {
+        const wait = 1000 * attempt  // 1s, 2s, 3s
+        await new Promise(r => setTimeout(r, wait))
+      }
+    }
+  }
+  throw lastErr
+}
+
+module.exports = { fetchJSON, download, downloadWithRetry, friendlyError, NetworkError, HttpError }

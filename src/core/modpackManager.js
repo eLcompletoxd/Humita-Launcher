@@ -30,9 +30,10 @@ const FALLBACK_MODPACKS = {
       name:        'Survival SMP',
       description: 'Servidor survival con mods de calidad de vida',
       version:     '1.21.4',
-      serverIp:    'play.humita.cl',
+      serverIp:    'play.cubecraft.net',
       logo:        '',
       color:       '#27ae60',
+      background:  '',
       mods:        [],
     },
     {
@@ -40,9 +41,10 @@ const FALLBACK_MODPACKS = {
       name:        'SkyBlock Plus',
       description: 'SkyBlock con mecánicas personalizadas',
       version:     '1.20.1',
-      serverIp:    'skyblock.humita.cl',
+      serverIp:    'hypixel.net',
       logo:        '',
       color:       '#3498db',
+      background:  '',
       mods:        [],
     },
   ],
@@ -50,8 +52,17 @@ const FALLBACK_MODPACKS = {
 
 // ─── Directorios de instancia ─────────────────────────────────
 
+function getBaseDir() {
+  // Windows: C:\Users\<user>\AppData\Roaming\.humita
+  // macOS/Linux: ~/.humita
+  const base = os.platform() === 'win32'
+    ? (process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'))
+    : os.homedir()
+  return path.join(base, '.humita')
+}
+
 function getModpackDir(modpackId) {
-  return path.join(os.homedir(), '.humita-launcher', 'instances', modpackId)
+  return path.join(getBaseDir(), 'instances', modpackId)
 }
 
 function getModsDir(modpackId) {

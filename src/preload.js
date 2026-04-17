@@ -81,6 +81,11 @@ contextBridge.exposeInMainWorld('api', {
     onProgress:  (cb) => onChannel('modpacks:progress', cb),
   },
 
+  // App info
+  app: {
+    version: () => ipcRenderer.invoke('app:version'),
+  },
+
   // Shell
   shell: {
     openExternal: (url) => ipcRenderer.send('shell:openExternal', url),

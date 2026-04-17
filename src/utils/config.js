@@ -14,7 +14,9 @@ const path = require('path')
 const os   = require('os')
 const fs   = require('fs')
 
-const CONFIG_DIR = path.join(os.homedir(), '.humita-launcher')
+const CONFIG_DIR = os.platform() === 'win32'
+  ? path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), '.humita')
+  : path.join(os.homedir(), '.humita')
 
 // ─── Intentar cargar keytar (opcional) ───────────────────────
 let keytar = null

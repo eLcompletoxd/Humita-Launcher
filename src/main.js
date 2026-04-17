@@ -6,7 +6,7 @@
  * - PUNTO 10: validación básica de parámetros en handlers IPC
  */
 
-const { app, BrowserWindow, ipcMain, shell } = require('electron')
+const { app, BrowserWindow, ipcMain, shell, Menu } = require('electron')
 const path = require('path')
 const isDev = process.argv.includes('--dev')
 
@@ -21,19 +21,22 @@ const javaFinder     = require('./utils/javaFinder')
 let mainWindow
 
 function createWindow() {
-  mainWindow = new BrowserWindow({
-    width: 960, height: 620,
-    minWidth: 960, minHeight: 620,
-    maxWidth: 960, maxHeight: 620,
+mainWindow = new BrowserWindow({
+    width: 1280 ,  // Cambiar de 960
+    height: 720 ,  // Cambiar de 620
+    minWidth: 1280 ,
+    minHeight: 720 ,
+    maxWidth: 1280 ,
+    maxHeight: 720 ,
     resizable: false, maximizable: false, fullscreenable: false,
-    frame: false, transparent: false,
+    frame: true,
     backgroundColor: '#1a1a2e',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
     },
-    icon: path.join(__dirname, '../assets/icon.png'),
+    icon: path.join(__dirname, '..', 'assets', 'icon.ico'),
   })
 
   mainWindow.loadFile(path.join(__dirname, 'ui/index.html'))
@@ -41,6 +44,7 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  Menu.setApplicationMenu(null)
   createWindow()
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
@@ -166,6 +170,10 @@ ipcMain.handle('modpacks:install', async (_, modpackId, modpackData) => {
 
 ipcMain.handle('modpacks:isInstalled', (_, modpackId) => {
   return modpackManager.isInstalled(modpackId)
+})
+
+ipcMain.handle('app:version', () => {
+  return app.getVersion();
 })
 
 // ─── Shell ────────────────────────────────────────────────────

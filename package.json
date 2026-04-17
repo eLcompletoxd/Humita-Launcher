@@ -1,6 +1,6 @@
 {
   "name": "humita-launcher",
-  "version": "1.0.0",
+  "version": "1.2.7",
   "description": "Launcher de Minecraft modular desarrollado con Electron",
   "main": "src/main.js",
   "author": "Humita Dev",
@@ -18,7 +18,7 @@
     "node-fetch": "^3.3.2"
   },
   "devDependencies": {
-    "electron": "^28.0.0",
+    "electron": "^41.2.1",
     "electron-builder": "^24.9.1"
   },
   "build": {
